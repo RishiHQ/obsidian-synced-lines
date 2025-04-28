@@ -1,11 +1,23 @@
-import { App, Plugin, Editor, EditorSelection, MarkdownFileInfo, MarkdownView } from 'obsidian';
+import { App, Plugin, Editor, EditorSelection, MarkdownFileInfo, MarkdownView, setIcon } from 'obsidian';
+import { Decoration, DecorationSet, EditorView, PluginValue, ViewPlugin, ViewUpdate, WidgetType } from '@codemirror/view';
+import { RangeSetBuilder } from '@codemirror/state';
+import { syntaxTree } from '@codemirror/language';
+
+// consider: saving line contents to json file and then on file load, pull from json file to update synced lines
 
 export default class SyncedLinesPlugin extends Plugin {
 	private debounceTimer: NodeJS.Timeout | null = null;
 	public isUpdatingOpenFiles = false;
 
 	async onload() {
-		this.registerOnEditorChange();
+		// this.registerOnEditorChange();
+		const blockIdDecorator = ViewPlugin.fromClass(AsteriskViewPlugin, {
+			decorations: (value: AsteriskViewPlugin) => value.decorations,
+			provide: plugin => EditorView.atomicRanges.of(view => {
+				return view.plugin(plugin)?.decorations || Decoration.none
+			})
+		});
+		this.registerEditorExtension(blockIdDecorator);
 	}
 
 	onunload() {
@@ -118,7 +130,7 @@ class SyncedLine {
 				// this.setValidCursor(editor, updatedLines, cursor);
 				editor.setCursor(cursor);
 				this.plugin.isUpdatingOpenFiles = false;
-				console.log(`Updated block(s) with reference ^${this.blockId} in open file: ${view.file.path}`);
+				console.log(`Updated block(s) with reference ^${this.blockId} in open file: ${view.file!.path}`);
 			}
 		});
 	}
@@ -158,5 +170,68 @@ class SyncedLine {
 	containsBlockId(otherLine: string): boolean {
 		const regex = new RegExp(`\\^${this.blockId}$`);
 		return regex.test(otherLine);
+	}
+}
+
+class AsteriskWidget extends WidgetType {
+	toDOM(view: EditorView): HTMLElement {
+		const div = document.createElement('span');
+		div.className = "obsidian-synced-lines_asterisk";
+		// div.innerText = '*';
+		// vertical-align: text-top; TODO
+		setIcon(div, 'asterisk');
+		return div;
+		// * Autoformat typescript pls ^evbi40
+		// * Autoformat typescript pls ^evbi40 12341234
+		// if i
+	}
+}
+
+class AsteriskViewPlugin implements PluginValue {
+	decorations: DecorationSet;
+
+	constructor(view: EditorView) {
+		this.decorations = this.buildDecorations(view);
+	}
+
+	buildDecorations(view: EditorView): DecorationSet {
+		const builder = new RangeSetBuilder<Decoration>();
+
+		// TODO: update to prefix with sync_
+		const regex = /\ ^([a-zA-Z0-9]+)$/g; // TODO: make all regexes match this
+
+		for (let { from, to } of view.visibleRanges) {
+			syntaxTree(view.state).iterate({
+				from,
+				to,
+				enter(node) {
+					if (node.type.name === 'blockid') {
+						// TODO: Change this to UUID length
+						builder.add(node.from, node.to, Decoration.replace({
+							widget: new AsteriskWidget(),
+							atomic: true,
+						}));
+						console.log(node);
+					}
+				}
+			})
+			// const text = view.state.doc.sliceString(from, to);
+			// let match;
+			// while ((match = regex.exec(text)) !== null) {
+			// 	const start = from + match.index;
+			// 	const end = start + match[0].length;
+
+			// builder.add(start, end, Decoration.replace());
+		}
+		return builder.finish();
+	}
+
+	update(update: ViewUpdate) {
+		if (update.docChanged || update.viewportChanged) {
+			this.decorations = this.buildDecorations(update.view);
+		}
+	}
+
+	destroy() {
 	}
 }
